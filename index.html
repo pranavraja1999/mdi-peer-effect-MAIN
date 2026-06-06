@@ -300,7 +300,7 @@ function goSection(sec){
 }
 
 // honesty stamp — added to every card
-const HONESTY = `<div class="honesty">Please answer honestly. Your responses will not affect your grades or standing at the institution.</div>`;
+const HONESTY = `<div class="honesty">PLEASE ANSWER HONESTLY. YOUR RESPONSES WILL NOT AFFECT YOUR GRADES OR STANDING AT THE INSTITUTION.</div>`;
 
 // nav row — NO back button
 function navRow(nextFn,nextLabel="Continue →"){
@@ -523,8 +523,6 @@ function renderBlock3(){
       • You receive <strong>50,000 units</strong> at the start of each round to invest.<br>
       • Allocate across five assets — amounts must add up to exactly 50,000.<br>
       • Higher expected return always comes with greater possible loss — not just higher upside.<br>
-      • Three rounds total. One is randomly selected for your real payment.<br>
-      • No results are shown between rounds.
     </div>
     <div class="sec-label">Asset Menu</div>
     <table class="inst-table">
@@ -912,14 +910,14 @@ function renderBlock10(){
   const makeSCOMat=(items,prefix)=>{
     return items.map((txt,i)=>{
       const cells=scale5.map((_,si)=>`<td><input type="radio" name="${prefix}_${i}" value="${si+1}"></td>`).join("");
-      return `<tr><td class="stmt">${i+1}. ${txt}${[4,10].includes(i+1)?" <em style='font-size:11px;color:var(--red)'>(R)</em>":""}</td>${cells}</tr>`;
+      return `<tr><td class="stmt">${i+1}. ${txt}${[4,10].includes(i+1)?"":""}</td>${cells}</tr>`;
     }).join("");
   };
   return `<div class="card">
     <div class="card-header"><span class="block-badge">Block 10</span><h2 class="card-title">About Your Personality</h2></div>
     ${HONESTY}
     <div class="sec-label">Big Five Personality (BFI-10)</div>
-    <p style="font-size:13px;color:var(--slate);margin-bottom:10px">How well do the following describe your personality? <em>(R) = reverse scored</em></p>
+    <p style="font-size:13px;color:var(--slate);margin-bottom:10px">How well do the following describe your personality?</p>
     <div class="matrix-wrap">
       <table class="matrix">
         <thead><tr><th class="stmt-col">Statement</th>${scaleHead}</tr></thead>
@@ -927,7 +925,7 @@ function renderBlock10(){
       </table>
     </div>
     <div class="sec-label" style="margin-top:24px">Social Comparison Orientation</div>
-    <p style="font-size:13px;color:var(--slate);margin-bottom:10px">How much does each statement apply to you? <em>(R) = reverse scored</em></p>
+    <p style="font-size:13px;color:var(--slate);margin-bottom:10px">How much does each statement apply to you?</p>
     <div class="matrix-wrap">
       <table class="matrix">
         <thead><tr><th class="stmt-col">Statement</th>${scaleHead}</tr></thead>
