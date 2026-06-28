@@ -122,7 +122,7 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 // CONFIG
 // ═══════════════════════════════════════════════════════════════════════════
 const CONFIG = {
-  SCRIPT_URL: "https://script.google.com/macros/s/AKfycbyHgMmYm2FYVVWeTcLVWaLpwJIWofkc2Wu49udZQ5GqwLsp5ii8wF9r5JE8rdTeFTamvQ/exec",
+  SCRIPT_URL: "https://script.google.com/macros/s/AKfycbxl3qIIHiII3xylh2R4MPaV3qwQReRPyNixT-cVuqNf2ZhmEgv2ka2v8SiO1MSff126/exec",
   MAX_PARTICIPANTS: 80,
 };
 
@@ -322,93 +322,116 @@ function navRow(nextFn,nextLabel="Continue →"){
 function saveData(payload){
   if(!CONFIG.SCRIPT_URL) return;
   const json = JSON.stringify(payload);
-  // Single reliable method: form POST via hidden iframe (works cross-origin without CORS preflight)
-  try{
-    const iframeName = "_sf_"+Date.now();
-    const iframe = document.createElement("iframe");
-    iframe.name = iframeName;
-    iframe.style.display = "none";
-    document.body.appendChild(iframe);
-    const form = document.createElement("form");
-    form.method = "POST";
-    form.action = CONFIG.SCRIPT_URL;
-    form.target = iframeName;
-    form.style.display = "none";
-    const inp = document.createElement("input");
-    inp.type = "hidden"; inp.name = "data"; inp.value = json;
-    form.appendChild(inp);
-    document.body.appendChild(form);
-    form.submit();
-    setTimeout(()=>{
-      try{document.body.removeChild(form);document.body.removeChild(iframe);}catch(e){}
-    }, 8000);
-    console.log("Saved:",payload.block,"|",payload.pid,"|",payload.condition);
-  } catch(e){ console.error("Save error:",e); }
+
+  // Primary: fetch POST with no-cors (fire-and-forget, works with Apps Script)
+  fetch(CONFIG.SCRIPT_URL, {
+    method: "POST",
+    mode:   "no-cors",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body:   "data=" + encodeURIComponent(json),
+  }).catch(e => console.warn("POST failed, trying GET:", e));
+
+  // Fallback: GET with data in query string (Apps Script also handles this)
+  try {
+    const img = new Image();
+    img.src = CONFIG.SCRIPT_URL + "?data=" + encodeURIComponent(json);
+  } catch(e) {}
+
+  console.log("Saving:", payload.block, "| PID:", payload.pid, "| Email:", payload.email);
 }
 
 function saveBlock(block, data){
   saveData({
-    pid:          state.pid,
-    email:        state.email || "",
+    pid:          state.pid          || "",
+    email:        state.email        || "",
     timestamp:    new Date().toISOString(),
-    condition:    state.condition,
-    conditionNum: state.conditionNum,
-    payRound:     state.payRound,
+    condition:    state.condition    || "",
+    conditionNum: state.conditionNum || "",
+    payRound:     state.payRound     || "",
     block,
     ...data
   });
 }
 
-// ── EMAIL CHECK — called at cover page start ──────────────────────────────
-// Queries the Apps Script to check if email already submitted / has partial data
+// ── EMAIL CHECK — JSONP via dynamic script tag ────────────────────────────
+// Apps Script does not send CORS headers so fetch() cannot read the response.
+// A dynamic <script> tag sidesteps CORS entirely and delivers the callback.
 function checkEmailAndStart(email){
-  if(!CONFIG.SCRIPT_URL){ startSurvey(); return; }
+  if(!CONFIG.SCRIPT_URL){ state.email=email; startSurvey(); return; }
   showLoading(true);
-  const url = CONFIG.SCRIPT_URL + "?action=checkEmail&email=" + encodeURIComponent(email);
-  fetch(url, {method:"GET"})
-    .then(r=>r.json())
-    .then(res=>{
-      showLoading(false);
-      if(res.status === "complete"){
-        // Already fully completed — block re-entry
-        document.getElementById("sections-wrap").innerHTML=`
-          <div class="end-screen"><div class="end-inner">
-            <h2 style="font-family:var(--font-h);color:var(--navy);margin-bottom:12px">Already Submitted</h2>
-            <p style="color:var(--slate);font-size:14px;line-height:1.7">
-              Our records show that <strong>${email}</strong> has already completed this survey.<br><br>
+
+  const cbName = "_emailCb_" + Date.now();
+  let done = false;
+
+  window[cbName] = function(res){
+    done = true;
+    showLoading(false);
+    delete window[cbName];
+    const s = document.getElementById("jsonp-email-check");
+    if(s) s.remove();
+
+    if(res.status === "complete"){
+      document.getElementById("app").innerHTML=`
+        <div class="cover" style="justify-content:center">
+          <div style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:12px;padding:36px 32px;max-width:440px;text-align:center">
+            <h2 style="font-family:var(--font-h);color:var(--white);margin-bottom:14px">Already Submitted</h2>
+            <p style="color:rgba(255,255,255,0.75);font-size:14px;line-height:1.8">
+              Our records show that <strong style="color:var(--amber)">${email}</strong> has already completed this survey.<br><br>
               Each participant may submit only once. If you believe this is an error, please contact the research team.
             </p>
-            <p style="margin-top:16px;color:var(--mid);font-size:12px">Contact: puneet.arora@mdi.ac.in</p>
-          </div></div>`;
-      } else if(res.status === "partial"){
-        // Partial data found — offer resume
-        state.email = email;
-        state.pid   = res.pid || state.pid;
-        state.resumeSection = res.lastSection || "block1";
-        document.getElementById("sections-wrap").innerHTML=`
-          <div class="end-screen"><div class="end-inner">
-            <h2 style="font-family:var(--font-h);color:var(--navy);margin-bottom:12px">Welcome Back</h2>
-            <p style="color:var(--slate);font-size:14px;line-height:1.7">
-              We found an incomplete response for <strong>${email}</strong>.<br><br>
-              You can continue from where you left off, or start fresh.
-            </p>
-            <div style="display:flex;gap:12px;justify-content:center;margin-top:20px;flex-wrap:wrap">
-              <button class="btn btn-primary" onclick="resumeSurvey()">Resume →</button>
-              <button class="btn" style="border-color:var(--light);color:var(--slate)" onclick="startFresh()">Start Fresh</button>
-            </div>
-          </div></div>`;
-      } else {
-        // New participant
-        state.email = email;
-        startSurvey();
-      }
-    })
-    .catch(()=>{
-      // If network check fails, allow entry (don't block participant)
-      showLoading(false);
+            <p style="margin-top:20px;color:rgba(255,255,255,0.4);font-size:12px">Contact: puneet.arora@mdi.ac.in</p>
+          </div>
+        </div>`;
+    } else if(res.status === "partial"){
+      state.email = email;
+      state.pid   = res.pid || uid();
+      state.resumeSection = res.lastSection || "block1";
+      document.getElementById("app").innerHTML=`
+        <div class="progress-wrap"><div class="progress-bar"><div class="progress-fill" style="width:0%"></div></div><div class="progress-label">0% complete</div></div>
+        <div class="shell" id="sections-wrap"></div>`;
+      document.getElementById("sections-wrap").innerHTML=`
+        <div class="card" style="text-align:center;padding:40px 32px">
+          <h2 style="font-family:var(--font-h);color:var(--navy);margin-bottom:12px">Welcome Back</h2>
+          <p style="color:var(--slate);font-size:14px;line-height:1.8;margin-bottom:24px">
+            We found an incomplete response for <strong>${email}</strong>.<br>
+            You can continue from where you left off, or start fresh.
+          </p>
+          <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
+            <button class="btn btn-primary" onclick="resumeSurvey()">Resume where I left off →</button>
+            <button class="btn" style="border-color:var(--light);color:var(--slate)" onclick="startFresh()">Start fresh</button>
+          </div>
+        </div>`;
+    } else {
       state.email = email;
       startSurvey();
-    });
+    }
+  };
+
+  // Timeout fallback — if Apps Script doesn't respond in 6s, let them in
+  const timer = setTimeout(()=>{
+    if(!done){
+      done = true;
+      showLoading(false);
+      delete window[cbName];
+      const s = document.getElementById("jsonp-email-check");
+      if(s) s.remove();
+      console.warn("Email check timed out — proceeding");
+      state.email = email;
+      startSurvey();
+    }
+  }, 6000);
+
+  const script = document.createElement("script");
+  script.id  = "jsonp-email-check";
+  script.src = CONFIG.SCRIPT_URL
+    + "?action=checkEmail"
+    + "&email=" + encodeURIComponent(email)
+    + "&callback=" + cbName;
+  script.onerror = ()=>{
+    clearTimeout(timer);
+    if(!done){ done=true; showLoading(false); delete window[cbName]; state.email=email; startSurvey(); }
+  };
+  document.head.appendChild(script);
 }
 
 function resumeSurvey(){
