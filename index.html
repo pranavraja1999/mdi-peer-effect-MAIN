@@ -122,7 +122,7 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 // CONFIG
 // ═══════════════════════════════════════════════════════════════════════════
 const CONFIG = {
-  SCRIPT_URL: "https://script.google.com/macros/s/AKfycbwGDaqFOb1ud54myCirv_qwqPjYG1PkhSM_yI5T4NOBG6Up33pimICgt4G5ch_tR4Kuwg/exec",
+  SCRIPT_URL: "https://script.google.com/macros/s/AKfycbxccI_Cpd1n1atixg2vMUegO5YqzNhL6JLfoh4ZwBy28gu1Y_bAOBXHb7oQCOSq5Kf-BQ/exec",
   MAX_PARTICIPANTS: 80,
 };
 
@@ -149,6 +149,8 @@ const state = {
   lotteryOrder:   null,   // "HL_first" or "LA_first"
   payRound:       null,
   pid:            null,
+  email:          null,
+  resumeSection:  null,
   compAttempts:   0,
   compQuestion:   1,
   allocs:         {R1:{cash:0,L:0,M:0,H:0,V:0},R2:{cash:0,L:0,M:0,H:0,V:0},R3:{cash:0,L:0,M:0,H:0,V:0}},
@@ -317,32 +319,110 @@ function navRow(nextFn,nextLabel="Continue →"){
 // ═══════════════════════════════════════════════════════════════════════════
 // DATA SAVING
 // ═══════════════════════════════════════════════════════════════════════════
-async function saveData(payload){
+function saveData(payload){
   if(!CONFIG.SCRIPT_URL) return;
+  const json = JSON.stringify(payload);
+  // Single reliable method: form POST via hidden iframe (works cross-origin without CORS preflight)
   try{
-    const json=JSON.stringify(payload);
-    // Method 1: GET
-    fetch(CONFIG.SCRIPT_URL+"?data="+encodeURIComponent(json),{method:"GET",mode:"no-cors"}).catch(()=>{});
-    // Method 2: hidden form POST
-    const form=document.createElement("form");
-    form.method="POST"; form.action=CONFIG.SCRIPT_URL;
-    form.target="_sf_"+Date.now(); form.style.display="none";
-    const inp=document.createElement("input");
-    inp.type="hidden"; inp.name="data"; inp.value=json;
+    const iframeName = "_sf_"+Date.now();
+    const iframe = document.createElement("iframe");
+    iframe.name = iframeName;
+    iframe.style.display = "none";
+    document.body.appendChild(iframe);
+    const form = document.createElement("form");
+    form.method = "POST";
+    form.action = CONFIG.SCRIPT_URL;
+    form.target = iframeName;
+    form.style.display = "none";
+    const inp = document.createElement("input");
+    inp.type = "hidden"; inp.name = "data"; inp.value = json;
     form.appendChild(inp);
-    const iframe=document.createElement("iframe");
-    iframe.name=form.target; iframe.style.display="none";
-    document.body.appendChild(iframe); document.body.appendChild(form);
+    document.body.appendChild(form);
     form.submit();
-    setTimeout(()=>{try{document.body.removeChild(form);document.body.removeChild(iframe);}catch(e){}},5000);
-    console.log("Saved:",payload.block,"|",payload.condition);
-  }catch(e){console.error("Save error:",e);}
+    setTimeout(()=>{
+      try{document.body.removeChild(form);document.body.removeChild(iframe);}catch(e){}
+    }, 8000);
+    console.log("Saved:",payload.block,"|",payload.pid,"|",payload.condition);
+  } catch(e){ console.error("Save error:",e); }
 }
 
-async function saveBlock(block,data){
-  await saveData({pid:state.pid,timestamp:new Date().toISOString(),
-    condition:state.condition,conditionNum:state.conditionNum,
-    block,payRound:state.payRound,...data});
+function saveBlock(block, data){
+  saveData({
+    pid:          state.pid,
+    email:        state.email || "",
+    timestamp:    new Date().toISOString(),
+    condition:    state.condition,
+    conditionNum: state.conditionNum,
+    payRound:     state.payRound,
+    block,
+    ...data
+  });
+}
+
+// ── EMAIL CHECK — called at cover page start ──────────────────────────────
+// Queries the Apps Script to check if email already submitted / has partial data
+function checkEmailAndStart(email){
+  if(!CONFIG.SCRIPT_URL){ startSurvey(); return; }
+  showLoading(true);
+  const url = CONFIG.SCRIPT_URL + "?action=checkEmail&email=" + encodeURIComponent(email);
+  fetch(url, {method:"GET"})
+    .then(r=>r.json())
+    .then(res=>{
+      showLoading(false);
+      if(res.status === "complete"){
+        // Already fully completed — block re-entry
+        document.getElementById("sections-wrap").innerHTML=`
+          <div class="end-screen"><div class="end-inner">
+            <h2 style="font-family:var(--font-h);color:var(--navy);margin-bottom:12px">Already Submitted</h2>
+            <p style="color:var(--slate);font-size:14px;line-height:1.7">
+              Our records show that <strong>${email}</strong> has already completed this survey.<br><br>
+              Each participant may submit only once. If you believe this is an error, please contact the research team.
+            </p>
+            <p style="margin-top:16px;color:var(--mid);font-size:12px">Contact: puneet.arora@mdi.ac.in</p>
+          </div></div>`;
+      } else if(res.status === "partial"){
+        // Partial data found — offer resume
+        state.email = email;
+        state.pid   = res.pid || state.pid;
+        state.resumeSection = res.lastSection || "block1";
+        document.getElementById("sections-wrap").innerHTML=`
+          <div class="end-screen"><div class="end-inner">
+            <h2 style="font-family:var(--font-h);color:var(--navy);margin-bottom:12px">Welcome Back</h2>
+            <p style="color:var(--slate);font-size:14px;line-height:1.7">
+              We found an incomplete response for <strong>${email}</strong>.<br><br>
+              You can continue from where you left off, or start fresh.
+            </p>
+            <div style="display:flex;gap:12px;justify-content:center;margin-top:20px;flex-wrap:wrap">
+              <button class="btn btn-primary" onclick="resumeSurvey()">Resume →</button>
+              <button class="btn" style="border-color:var(--light);color:var(--slate)" onclick="startFresh()">Start Fresh</button>
+            </div>
+          </div></div>`;
+      } else {
+        // New participant
+        state.email = email;
+        startSurvey();
+      }
+    })
+    .catch(()=>{
+      // If network check fails, allow entry (don't block participant)
+      showLoading(false);
+      state.email = email;
+      startSurvey();
+    });
+}
+
+function resumeSurvey(){
+  goSection(state.resumeSection || "block1");
+}
+
+function startFresh(){
+  state.pid = uid();
+  goSection("participantInfo");
+}
+
+function showLoading(show){
+  const el = document.getElementById("loading");
+  if(el) el.style.display = show ? "flex" : "none";
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -358,6 +438,14 @@ function renderCover(){
     <div class="cover-meta">
       <div class="meta-item"><div class="meta-label">Duration</div><div class="meta-value">20 – 25 minutes</div></div>
       <div class="meta-item"><div class="meta-label">Principal Investigator</div><div class="meta-value">Dr Puneet Arora</div></div>
+    </div>
+    <div style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:10px;padding:18px 20px;max-width:380px;width:100%;margin-bottom:22px;text-align:left">
+      <label style="display:block;font-size:11px;color:var(--amber);text-transform:uppercase;letter-spacing:0.07em;margin-bottom:8px">Institute Email ID</label>
+      <input type="email" id="cover_email" placeholder="yourname@mdi.ac.in"
+        style="width:100%;padding:10px 13px;border-radius:7px;border:1.5px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.1);color:var(--white);font-size:14px;box-sizing:border-box;outline:none"
+        onfocus="this.style.borderColor='var(--amber)'" onblur="this.style.borderColor='rgba(255,255,255,0.2)'"
+        onkeydown="if(event.key==='Enter') startStudy()">
+      <div id="err-cover-email" style="display:none;color:#ffb347;font-size:12px;margin-top:6px">Please enter a valid institute email address to continue.</div>
     </div>
     <button class="btn btn-primary" onclick="startStudy()" style="padding:13px 36px;font-size:15px">Begin →</button>
   </div>`;
@@ -445,11 +533,12 @@ function renderBlock1(){
     <div class="q-note" style="margin-bottom:16px;font-style:normal;color:var(--slate);font-size:13px">Your name and roll number confirm eligibility only and are stored separately from your responses. All responses will be kept strictly confidential and used solely for research purposes in anonymised form. Your participation and answers will in no way affect, nor be taken into consideration for, your grades or standing at the institution.</div>
     <div class="q-block"><div class="q-label"><span class="q-num">1</span>Full name</div><input type="text" id="b1_name" placeholder="Your full name"></div>
     <div class="q-block"><div class="q-label"><span class="q-num">2</span>Institute roll number</div><input type="text" id="b1_roll" placeholder="e.g. 2024001"></div>
+    <div class="q-block"><div class="q-label"><span class="q-num">3</span>Institute email ID</div><input type="email" id="b1_email" placeholder="yourname@mdi.ac.in" value="${state.email||''}" readonly style="background:var(--light);color:var(--mid);cursor:not-allowed"></div>
     <div class="q-block">
-  <div class="q-label"><span class="q-num">3</span>Completed age (in years)</div>
+  <div class="q-label"><span class="q-num">4</span>Completed age (in years)</div>
   <input type="number" id="b1_age" min="18" max="60" placeholder="e.g. 24">
 </div>
-    <div class="q-block"><div class="q-label"><span class="q-num">4</span>Gender</div>
+    <div class="q-block"><div class="q-label"><span class="q-num">5</span>Gender</div>
       <div class="options">
         <label class="opt" onclick="selectOpt(this,'b1_gender')"><input type="radio" name="b1_gender" value="1"><span>Male</span></label>
         <label class="opt" onclick="selectOpt(this,'b1_gender')"><input type="radio" name="b1_gender" value="2"><span>Female</span></label>
@@ -457,10 +546,10 @@ function renderBlock1(){
         <label class="opt" onclick="selectOpt(this,'b1_gender')"><input type="radio" name="b1_gender" value="4"><span>Prefer not to say</span></label>
       </div>
     </div>
-    <div class="q-block"><div class="q-label"><span class="q-num">5</span>State / union territory of birth</div>
+    <div class="q-block"><div class="q-label"><span class="q-num">6</span>State / union territory of birth</div>
       <select id="b1_state"><option value="">— Select —</option>${stateOpts}</select>
     </div>
-    <div class="q-block"><div class="q-label"><span class="q-num">6</span>Parents' combined annual income</div>
+    <div class="q-block"><div class="q-label"><span class="q-num">7</span>Parents' combined annual income</div>
       <div class="options">
         <label class="opt" onclick="selectOpt(this,'b1_income')"><input type="radio" name="b1_income" value="1"><span>₹5 – 10 lakh</span></label>
         <label class="opt" onclick="selectOpt(this,'b1_income')"><input type="radio" name="b1_income" value="2"><span>₹10 – 15 lakh</span></label>
@@ -469,7 +558,7 @@ function renderBlock1(){
         <label class="opt" onclick="selectOpt(this,'b1_income')"><input type="radio" name="b1_income" value="5"><span>₹25 lakh and above</span></label>
       </div>
     </div>
-    <div class="q-block"><div class="q-label"><span class="q-num">7</span>Course currently enrolled in</div>
+    <div class="q-block"><div class="q-label"><span class="q-num">8</span>Course currently enrolled in</div>
       <div class="options">
         <label class="opt" onclick="selectOpt(this,'b1_course')"><input type="radio" name="b1_course" value="1"><span>PGDM</span></label>
         <label class="opt" onclick="selectOpt(this,'b1_course')"><input type="radio" name="b1_course" value="2"><span>PGDM HR</span></label>
@@ -478,10 +567,10 @@ function renderBlock1(){
         <label class="opt" onclick="selectOpt(this,'b1_course')"><input type="radio" name="b1_course" value="5"><span>PGDM BFS</span></label>
       </div>
     </div>
-    <div class="q-block"><div class="q-label"><span class="q-num">8</span>CAT percentile</div>
+    <div class="q-block"><div class="q-label"><span class="q-num">9</span>CAT percentile</div>
       <input type="number" id="b1_cat" min="0" max="100" step="0.01" placeholder="e.g. 97.5">
     </div>
-    <div class="q-block"><div class="q-label"><span class="q-num">9</span>Have you ever invested in the stock market or mutual funds?</div>
+    <div class="q-block"><div class="q-label"><span class="q-num">10</span>Have you ever invested in the stock market or mutual funds?</div>
       <div class="options">
         <label class="opt" onclick="selectOpt(this,'b1_invest')"><input type="radio" name="b1_invest" value="1"><span>Yes</span></label>
         <label class="opt" onclick="selectOpt(this,'b1_invest')"><input type="radio" name="b1_invest" value="2"><span>No</span></label>
@@ -1272,10 +1361,24 @@ function randomLotteryOrder(){
 }
 
 function startStudy(){
-  state.pid=uid();
+  const emailEl = document.getElementById("cover_email");
+  const errEl   = document.getElementById("err-cover-email");
+  const email   = emailEl ? emailEl.value.trim() : "";
+  // Basic email validation
+  if(!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+    if(errEl) errEl.style.display = "block";
+    if(emailEl) emailEl.focus();
+    return;
+  }
+  if(errEl) errEl.style.display = "none";
+  checkEmailAndStart(email);
+}
+
+function startSurvey(){
+  state.pid = uid();
   randomCondition();
   randomLotteryOrder();
-  console.log("Assigned:",state.condition,"| Lotteries:",state.lotteryOrder,"| PID:",state.pid);
+  console.log("Assigned:",state.condition,"| Lotteries:",state.lotteryOrder,"| PID:",state.pid,"| Email:",state.email);
   document.getElementById("app").innerHTML=`
     <div class="progress-wrap"><div class="progress-bar"><div class="progress-fill" style="width:0%"></div></div><div class="progress-label">0% complete</div></div>
     <div class="shell" id="sections-wrap"></div>`;
@@ -1314,6 +1417,7 @@ function submitBlock1(){
   radios.forEach(n=>d[n]=getChecked(n));
   const cat=document.getElementById("b1_cat");
   if(cat) d.b1_cat=cat.value;
+  d.b1_email = state.email || "";
   state.answers.block1=d;
   saveBlock("B1_Demographics",d);
   goSection("block2");
