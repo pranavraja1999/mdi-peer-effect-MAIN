@@ -359,11 +359,7 @@ function saveData(payload){
     body:   "data=" + encodeURIComponent(json),
   }).catch(e => console.warn("POST failed, trying GET:", e));
 
-  // Fallback: GET with data in query string (Apps Script also handles this)
-  try {
-    const img = new Image();
-    img.src = CONFIG.SCRIPT_URL + "?data=" + encodeURIComponent(json);
-  } catch(e) {}
+  // GET fallback removed — prevents duplicate rows in the sheet
 
   console.log("Saving:", payload.block, "| PID:", payload.pid, "| Email:", payload.email);
 }
@@ -417,18 +413,7 @@ function checkEmailAndStart(email){
       document.getElementById("app").innerHTML=`
         <div class="progress-wrap"><div class="progress-bar"><div class="progress-fill" style="width:0%"></div></div><div class="progress-label">0% complete</div></div>
         <div class="shell" id="sections-wrap"></div>`;
-      document.getElementById("sections-wrap").innerHTML=`
-        <div class="card" style="text-align:center;padding:40px 32px">
-          <h2 style="font-family:var(--font-h);color:var(--navy);margin-bottom:12px">Welcome Back</h2>
-          <p style="color:var(--slate);font-size:14px;line-height:1.8;margin-bottom:24px">
-            We found an incomplete response for <strong>${email}</strong>.<br>
-            You can continue from where you left off, or start fresh.
-          </p>
-          <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
-            <button class="btn btn-primary" onclick="resumeSurvey()">Resume where I left off →</button>
-            <button class="btn" style="border-color:var(--light);color:var(--slate)" onclick="startFresh()">Start fresh</button>
-          </div>
-        </div>`;
+      goSection(state.resumeSection || "block1");
     } else {
       state.email = email;
       startSurvey();
@@ -464,11 +449,6 @@ function checkEmailAndStart(email){
 
 function resumeSurvey(){
   goSection(state.resumeSection || "block1");
-}
-
-function startFresh(){
-  state.pid = uid();
-  goSection("participantInfo");
 }
 
 function showLoading(show){
